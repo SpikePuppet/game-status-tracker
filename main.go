@@ -27,7 +27,9 @@ type GameStatus struct {
 
 func main() {
 	router := gin.Default()
-	router.POST("/game-status", saveStatus)
+	router.POST("/save-game-status", saveStatus)
+	router.GET("/current-game-status/:game-name", getGameStatus)
+	router.GET("/game-timeline/:game-name", getGameStatusTimeline)
 	router.Run()
 }
 
@@ -65,4 +67,73 @@ func saveStatus(context *gin.Context) {
 	context.JSON(200, gin.H{
 		"message": "Yep it works!",
 	})
+}
+
+func getGameStatus(context *gin.Context) {
+	title := context.Param("game-name")
+	psqlConnectionInfo := fmt.Sprintf("host=%s port=%d user=%s "+
+		"password=%s dbname=%s sslmode=disable",
+		host, port, user, password, dbname)
+
+	db, err := sql.Open("postgres", psqlConnectionInfo)
+	if err != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer db.Close()
+
+	var status string
+	selectStatement := `SELECT status FROM gamestatus WHERE title=$1 ORDER BY datetime DESC LIMIT 1`
+	row := db.QueryRow(selectStatement, title)
+	switch err := row.Scan(&status); err {
+	case sql.ErrNoRows:
+		context.String(http.StatusOK, "No status found")
+		return
+	case nil:
+		context.String(http.StatusOK, status)
+		return
+	default:
+		context.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+}
+
+func getGameStatusTimeline(context *gin.Context) {
+	title := context.Param("game-name")
+	psqlConnectionInfo := fmt.Sprintf("host=%s port=%d user=%s "+
+		"password=%s dbname=%s sslmode=disable",
+		host, port, user, password, dbname)
+
+	db, err := sql.Open("postgres", psqlConnectionInfo)
+	if err != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer db.Close()
+
+	var timeline []GameStatus
+	selectStatement := `SELECT datetime, status FROM gamestatus WHERE title=$1 ORDER BY datetime`
+	rows, err := db.Query(selectStatement, title)
+	if err != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	for rows.Next() {
+		record := new(GameStatus)
+		err = rows.Scan(&record.DateTime, &record.Status)
+		if err != nil {
+			context.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		timeline = append(timeline, *record)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		context.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	context.JSON(200, timeline)
 }
